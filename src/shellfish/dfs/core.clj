@@ -1,35 +1,27 @@
 (ns shellfish.dfs.core
+  (:refer-clojure :exclude [update])
   (:require [clojure.zip :as z]))
 
 ;; Definitions
 ;; - Solution to a DFS problem can be anything built of partial results,
-;;   each of which is an Element.
+;;   each of which is an Element of the solution.
 ;; - State: a client provided entity, together with update and predicate 
 ;;   functions, which encapsulates the client domain world at a given step.
 ;;   It also links back to all previously visited states
 ;;   It is used to generate elements and in deciding whether liveness is 
 ;;   impeded. 
-;; - Validity: an element is valid as decided by the problem domain,
-;;   as provided by the client (e.g. a function)
-;; - Liveness: a partial solution is alive after contributing an element, 
-;;   if it can't be shown that progress isn't being made after the 
-;;   contribution. This is decided by a client function taking as 
-;;   argument all states visited so far.
-;; - Goal Reach: an individual solution is complete the client domain
-;;   decides so, given the current-state.
+;; - Goal Reach: an individual solution is complete, as decided by a client 
+;;   domain predicate on the current-state
 ;; - Candidate: a valid element according to the current state and 
 ;;   the client domain.
 ;;
-;; Algo: Given a initial-state, validating, liveness and goal-reach predicates,
-;;       as well as a generator function, lazily generate all solutions for which
-;;       (goal-reached? <current-state>): for each candidate partial result,
-;;       either end the current search if liveness is impeded, in which case
-;;       the next candidate from the previous partial result is evaluated (if any); 
-;;       or add the candidate to the current partial result and recurse. If a 
-;;       solution has been reached, return to the previous partial result and 
-;;       recurse on the next candidate.
-;;       Laziness is on a per-solution basis: a computation produces the next
-;;       solution or nil if none is found. 
+;; Intent: to provide in isolation the low-level work of state traversal and 
+;;         backtracking in a depth-first search, from problem domain specific 
+;;         decisions such as what consitutes a solution, and validation/generation 
+;;         of elements. A client then only needs to provide an initial state 
+;;         together with a state update and result accumulator functions,
+;;         an end-state predicate, and a generator of candidate solution elements.
+;;
 
 (defn cands<-state [candidates state]
   (->> candidates 
@@ -58,44 +50,55 @@
       znxt)))
 
 (defn next-solution [zcands
-                     {:keys [alive? goal? add-to-result 
-                             update-state generate-cands]}]
+                     {:keys [goal? add update generate] :as cfg}]
   (loop [[[x {:keys [state visited result]}] _ :as zcands] zcands]
     (when zcands
-      (let [next-state (update-state state x)]
+      (let [next-state (update state x)]
         (cond 
           (goal? next-state)
-          [(add-to-result result x) (znext zcands)]
-          (not (alive? next-state visited))
+          [(add result x) (znext zcands)]
+          (visited next-state)
           (recur (znext zcands))
           :else
           (recur (zadd-znext zcands 
-                             (generate-cands next-state)
+                             (generate next-state)
                              {:state next-state
                               :visited (conj visited next-state)
-                              :result (add-to-result result x)})))))))
+                              :result (add result x)})))))))
 
-(defn depth-first-search 
-  ([init-state, alive?-pred, goal-pred?, generate-candidates-fn,
+(defn dfs
+"Given a domain context and parameter functions, returns a lazy sequence 
+ of all solutions using depth-first search. 
+
+ The domain context and parameters map argument consists of:
+  :init-state, an initial state 
+  :goal?, a predicate which returns true if its argument state represents a solution
+  :update, a fn taking a state and a solution element, and yielding the next state
+  :generate, a fn generating a sequence of candidates from the current state
+  :add, a 0- arity and 2-arity fn initializing and adding an element to a solution,
+        defaults to 'conj
+
+ Note that outputs from the update function are assumed to be unique, or inaccurate 
+ results or non-termination may occur. 
+"
+  ([{:keys [init-state goal? generate add update]
+     :or {add conj} :as params}]
+   (let [cfg (merge {:add add} 
+                    (select-keys params [:goal? :generate :add :update])) 
+         seed (-> init-state generate 
+                  (zload {:state init-state
+                          :visited #{init-state}
+                          :result (add)}) 
+                   zinit)
+         f (fn f [zcands]
+             (when-let [[sol next-zcands] (next-solution zcands cfg)]
+               (cons sol (f next-zcands))))]
+     (f seed)))
+
+  ([init-state, goal-pred?, generate-candidates-fn,
     add-element-fn, update-state-fn]
-   (let [candidates (generate-candidates-fn init-state)
-         zcands (zinit (zload candidates {:state init-state
-                                          :visited #{init-state}
-                                          :result (add-element-fn)}))]
-     (depth-first-search zcands  {:alive? alive?-pred
-                                  :goal? goal-pred?
-                                  :generate-cands generate-candidates-fn
-                                  :add-to-result add-element-fn
-                                  :update-state update-state-fn})))
-  ([zcands cfg]
-   ;; (println :ZCANDS zcands)
-   (when-let [[solution next-zcands] (next-solution zcands cfg)]
-     (cons solution
-           (lazy-seq (depth-first-search next-zcands cfg))))))
-
-
-#_(defn incr [n]
-  (cons n
-        (lazy-seq (incr (inc n)))))
-
-
+   (depth-first-search {:init-state init-state
+                        :goal? goal-pred?
+                        :generate generate-candidates-fn
+                        :add add-element-fn
+                        :update update-state-fn})))

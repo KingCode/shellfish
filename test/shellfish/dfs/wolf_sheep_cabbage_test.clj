@@ -1,6 +1,6 @@
-(ns shellfish.dfs.wolf-sheep-cabbage
+(ns shellfish.dfs.wolf-sheep-cabbage-test
   (:require [shellfish.dfs.core :as algo] 
-            [clojure.test :as t]))
+            [clojure.test :as t :refer [deftest testing is]]))
 
 (def passengers [:wolf :sheep :cabbage])
 (def loss-groups (->> passengers 
@@ -41,23 +41,11 @@
          (filter #(valid-move? state % d))
          (map #(hash-map :passenger % :direction d)))))
 
-(def init-state {:from (set passengers) 
-                 :to #{} 
-                 :after :init})
-
-(defn alive? [state visited]
-  (not (visited state)))
-
 (defn goal-reached? [{:keys [from to]}]
   (and (= nil (seq from)) 
        (= (set passengers) to)))
 
-(defn add-trip 
-  ([] [])
-  ([history trip]
-   (conj history trip)))
-
-(defn update-state [ state
+(defn update-state [state
                     {:keys [passenger direction] :as trip}]
   (let [{:keys [src src-k dst dst-k]} (src+dst state direction)]
     (merge (if passenger
@@ -67,9 +55,29 @@
            {:after direction})))
 
 (defn wolf-sheep-cabbage []
-  (algo/depth-first-search init-state 
-                      alive?
-                      goal-reached?
-                      trip-candidates
-                      add-trip
-                      update-state))
+  (algo/dfs {:init-state {:from (set passengers), :to #{} :after :init}
+             :generate trip-candidates
+             :goal? goal-reached?
+             :update update-state}))
+
+(deftest wolf-sheep-cabbage-dfs-test
+  (testing "wolf sheep cabbage yields 2 solutions"
+    (let [sols (wolf-sheep-cabbage)]
+      (is
+       (and (= 2 (count sols))
+            (every? #{[{:passenger :sheep, :direction :across}
+                       {:passenger nil, :direction :return}
+                       {:passenger :cabbage, :direction :across}
+                       {:passenger :sheep, :direction :return}
+                       {:passenger :wolf, :direction :across}
+                       {:passenger nil, :direction :return}
+                       {:passenger :sheep, :direction :across}]
+                      [{:passenger :sheep, :direction :across}
+                       {:passenger nil, :direction :return}
+                       {:passenger :wolf, :direction :across}
+                       {:passenger :sheep, :direction :return}
+                       {:passenger :cabbage, :direction :across}
+                       {:passenger nil, :direction :return}
+                       {:passenger :sheep, :direction :across}]
+                      }
+                    sols))))))
