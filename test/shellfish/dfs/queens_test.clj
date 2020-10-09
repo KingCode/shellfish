@@ -112,7 +112,7 @@
                    (reduced false)
                    :else
                    [(into squares 
-                          (mapcat identity (diagonals n [r c])))
+                          (apply concat (diagonals n [r c])))
                     (conj rs r)
                     (conj cs c)]))
                [#{} #{} #{}])))
