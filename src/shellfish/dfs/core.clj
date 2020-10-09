@@ -97,7 +97,7 @@
 
   ([init-state, goal-pred?, generate-candidates-fn,
     add-element-fn, update-state-fn]
-   (depth-first-search {:init-state init-state
+   (dfs {:init-state init-state
                         :goal? goal-pred?
                         :generate generate-candidates-fn
                         :add add-element-fn
