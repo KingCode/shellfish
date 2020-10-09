@@ -1,4 +1,4 @@
-(defproject hello "0.1.0-SNAPSHOT"
+(defproject shellfish "0.4-ALPHA"
   :description "FIXME: write description"
   :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"
