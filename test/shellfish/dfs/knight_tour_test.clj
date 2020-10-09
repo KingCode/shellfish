@@ -1,11 +1,7 @@
 (ns shellfish.dfs.knight-tour-test
   (:require [shellfish.dfs.core :as algo] 
-            [clojure.test :as t]))
+            [clojure.test :as t :refer [deftest testing is]]))
 
-(defn rc->idx [n row col]
-  (-> (* row n) (+ col) ))
-(defn idx->rc [n idx]
-  [(quot idx n), (rem idx n)])
 (defn in-bounds [n [r c]]
   (every? #(< -1 % n) [r c]))
 
@@ -52,4 +48,37 @@
                              [x y])
                            (valid-moves n visited last)))
              :goal?  #(goal-reached? n %)
-             :update update-state}))
+             :update update-state
+             :options {:no-visited true}}))
+
+
+(deftest trivial-knight-tour-test 
+  (is (= [[[0 0]]] (knight-tour 1)))
+  (is (empty? (knight-tour 2)))
+  (is (empty? (knight-tour 3)))
+  (is (empty? (knight-tour 4))))
+
+(defn abs [x]
+  (if (neg? x)
+    (- x) 
+    x))
+
+(defn test-in-bounds? [n & [x & xs]]
+  (if-not x 
+    true
+    (and (< -1 x n)
+         (apply test-in-bounds? n xs))))
+
+(defn valid-solution? [n sol]
+  (and (= (* n n) (count (set sol)))
+       (->> (partition 2 1 sol)
+            (every? (fn [[[x1 y1] [x2 y2]]]
+                      (and (test-in-bounds? n x1 y1 x2 y2)
+                           (let [dx (abs (- x1 x2))
+                                 dy (abs (- y1 y2))]
+                             (or (and (= 1 dx) (= 2 dy))
+                                 (and (= 2 dx) (= 1 dy))))))))))
+
+(deftest knight-tour-5-test
+  (let [sols (take 5 (knight-tour 5))]
+    (is (every? #(valid-solution? 5 %) sols))))
