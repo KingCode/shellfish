@@ -123,6 +123,8 @@
 
 
 (deftest queens-completeness-test
+;; Based on
+;; https://en.wikipedia.org/wiki/Eight_queens_puzzle#Counting_solutions
   (is (every? identity 
               (map #(= % (count (queens %2))) 
                    [1, 0, 0, 2, 10, 4]
