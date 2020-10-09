@@ -42,7 +42,8 @@
                (iterate (fn [[r c]]
                           [(inc r) (dec c)])))] 
          (mapv (fn [diag] 
-                 (->> diag (take-while #(in-bounds? n %))))))))
+                 (->> diag (drop-while #(not (in-bounds? n %))) 
+                      (take-while #(in-bounds? n %))))))))
 
 (defn init [n]
   {:taken {:squares #{}
@@ -66,7 +67,7 @@
          {:taken {:rows (conj rows r)
                   :cols (conj cols c)
                   :squares (into squares
-                                 (mapcat identity (diagonals n rc)))}}))
+                                 (apply concat (diagonals n rc)))}}))
 
 (defn queens [n]
   (algo/dfs {:init-state (init n)
@@ -77,7 +78,7 @@
 
 
 (deftest diagonals-test
-  (are [diags n r c] (= (set diags) 
+  (are [expected n r c] (= (set expected) 
                         (set (->> (diagonals n [r c])
                                   (filter seq))))
     [[[0 0] [1 1] [2 2] [3 3]],
@@ -88,8 +89,15 @@
      [[1 3] [2 2] [3 1]]]
     4 2 2
     
-    [[[0 0] [1 1] [2 2] [3 3]]]
-    4 3 3))
+    [[[0 0] [1 1] [2 2] [3 3]],
+     [[3 3]]]
+    4 3 3
+
+    [[[0 1] [1 2]],
+     [[1 2] [2 1]]]
+    3 1 2
+
+))
 
 
 (defn valid-solution? [n sol]
@@ -110,4 +118,12 @@
                [#{} #{} #{}])))
 
 (deftest queens-test
-  (is (every? #(valid-solution? 5 %) (queens 5))))
+  (are [n] (every? #(valid-solution? n %) (queens n))
+    1 2 3 4 5))
+
+
+(deftest queens-completeness-test
+  (is (every? identity 
+              (map #(= % (count (queens %2))) 
+                   [1, 0, 0, 2, 10, 4]
+                   (range 1 7)))))
