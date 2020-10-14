@@ -1,18 +1,35 @@
 (ns shellfish.dfs.sudoku-test
   (:require [shellfish.dfs.core :as algo]
+            [shellfish.common.util :as u :refer [cond-let]]
             [clojure.set :as set]
             [clojure.test :as t :refer [deftest testing is are]]))
 
+;; Adapted from: http://www.norvig.com/sudoku.html
 (def boxsiz 3)
 (def gridsiz (* boxsiz boxsiz))
 (def idxs (range (* gridsiz gridsiz)))
 (def idxs-set (set idxs))
-(def values (range 1 10))
+(def values (set (range 1 10)))
+(def init-allowed (let [all-vals (set values)]
+                    (into {} 
+                          (map (fn [i]
+                                 [i all-vals]))
+                          (range (* gridsiz gridsiz)))))
+
+(defn conj-fn [init]
+  (fn f 
+    ([] init)
+    ([coll x]
+     (conj (or coll (f)) x))))
+
+(def conjs  (conj-fn #{}))
+
+(def conjm (conj-fn {}))
 
 (defn rc->idx 
-  ([row col] 
-   (rc->idx gridsiz row col))
-  ([n row col]
+  ([[row col]] 
+   (rc->idx gridsiz [row col]))
+  ([n [row col]]
    (-> (* row n ) (+ col) )))
 
 (defn idx->rc 
@@ -22,15 +39,15 @@
    [(quot idx n), (rem idx n)]))
 
 (defn rc->box [[r c]]
-  (rc->idx boxsiz (quot r boxsiz) (quot c boxsiz)))
+  (rc->idx boxsiz [(quot r boxsiz) (quot c boxsiz)]))
 
 (defn idx->box [idx]
   (rc->box (idx->rc idx)))
 
 (defn box-rc->idx [bidx [r c]]
   (let [[br bc] (idx->rc boxsiz bidx)]
-    (rc->idx (-> br (* boxsiz) (+ r)) 
-             (-> bc (* boxsiz) (+ c)))))
+    (rc->idx [(-> br (* boxsiz) (+ r)) 
+              (-> bc (* boxsiz) (+ c))])))
 
 (def idx->box (->> (for [i idxs]
                      [i (idx->box i)])
@@ -58,96 +75,112 @@
 (def idx->row (idx->linemap first))
 (def idx->col (idx->linemap second))
 
+(defn idx->line-gidxs [f] 
+  (into {} 
+       (map (fn [i]
+              (let [[r c :as rc] (idx->rc i)]
+                [i, (for [r-or-c (range gridsiz)]
+                            (rc->idx (f rc r-or-c)))])))
+       (range (* gridsiz gridsiz))))
+
+(def idx->row-gidxs (idx->line-gidxs (fn [[r _] c] [r c])))
+(def idx->col-gidxs (idx->line-gidxs (fn [[_ c] r] [r c])))
+(def idx->units
+  (into {} 
+        (map (fn [idx]
+               [idx, [(idx->box-gidxs idx)
+                      (into (idx->row-gidxs idx))
+                      (into (idx->col-gidxs idx))]])
+             idxs)))
+
+(def idx->peers 
+  (into {}
+        (map (fn [[idx units]] 
+               [idx (->> units (mapcat seq) 
+                         (remove #{idx}) distinct sort)]))
+        idx->units))
+
 (defn fmt-as-idx->val [box-boxrc-vals]
   (->> box-boxrc-vals (partition 3)
        (map (fn [[box brc v]]
                [(box-rc->idx box brc), v]))
        (into {})))
 
-(defn conj-fn [init]
-  (fn f 
-    ([] init)
-    ([coll x]
-     (conj (or coll (f)) x))))
+(declare assign)
 
-(def conjs  (conj-fn #{})
-  #_([] #{})
-  #_([coll v]
-   (conj (or coll (conjs)) v)))
+(defn prune 
+  "Prunes v from allowed values for idx, and if idx has only one
+  remaining value w, all of idx's peers are pruned from w.
+  If any of the units for idx contains a cell which can only have
+  w (either because the cell has no other, or all other cells in 
+  the unit are already assigned), that cell is assigned w.
 
-(def conjm (conj-fn {}))
+  If an empty set of value choices is found, no solution exists  
+  and nil is returned.
+  "
+  [allowed idx v]
+  (let [allowed'  
+        (cond-let 
+         (not (contains? idx-vals v)) [idx-vals (allowed idx)]
+         allowed ;; already removed
+         
+         (empty? remaining) [remaining (disj idx-vals v)]
+         nil ;; contradiction, no value possible for idx: abort
+         
+         (= 1 (count remaining)) 
+         [allowed- (assoc allowed idx remaining)
+          idxv (first remaining)]
+         (->> (idx->peers idx) ;; propagate to peers
+              (reduce (fn [alwd pidx]
+                        (if-let [less-alwd (and alwd (prune alwd pidx idxv))] 
+                          less-alwd
+                          (reduced nil)))
+                      allowed-))
 
-(defn populate-state [idx->val]
-  (let [ init-constraints (fn [m] 
-                            (reduce (fn [acc [i v]]
-                                      (update acc (get m i) conjs v))
-                                    {}
-                                    idx->val))]
-    {:occupied (set (keys idx->val))
-     :rows (init-constraints idx->row)
-     :cols (init-constraints idx->col)
-     :boxes (init-constraints idx->box)}))
+         :else 
+         allowed-)]
+    ;; find and assign units with only one place for v
+    (->> idx idx->units
+         (reduce 
+          (fn [alwd unit]
+            ;; (println :UNIT unit :IDX idx :V v)
+            (if-let [[uidx & more] ;; if v has only one place in u, assign it 
+                     (and alwd (->> unit (filter #(some #{v} (alwd %))) seq))]
+              (if-not more
+                (assign alwd uidx v) 
+                alwd)
+              (reduced nil))) ;; v MUST have a place in unit, but none found
+          allowed'))))
 
-(defn init-state [puzzle]
-  (populate-state (fmt-as-idx->val puzzle)))
 
-(defn update-state [{:keys [rows cols boxes occupied] :as state} [idx v]]
-  (merge state
-         {:rows (update rows (idx->row idx) conjs v)
-          :cols (update cols (idx->col idx) conjs v)
-          :boxes (update boxes (idx->box idx) conjs v)
-          :occupied (conj occupied idx)}))
+(defn prune-1 [prv-allowed idx v]
+  (prune prv-allowed idx v))
 
-(defn available [{:keys [rows cols boxes occupied] :as state}]
-  (->> (set/difference idxs-set occupied)
-       sort
-       (mapcat (fn [idx]
-                 (let [taken-vals (-> (get rows (idx->row idx) #{})
-                                      (into (get cols (idx->col idx)))
-                                      (into (get boxes (idx->box idx))))]
-                   (->> values (remove taken-vals)
-                        (map (fn [v]
-                               [idx v]))))))))
+(defn assign 
+  ([fixed]
+   (->> fixed
+        (reduce (fn [result [i v]]
+                  (assign result i v))
+                init-allowed)))
+  ([allowed idx v]
+   (let [dels (disj (allowed idx) v)]
+     (->> dels 
+          (reduce (fn [alwd x]
+                    (or (prune alwd idx x)
+                        (reduced nil)))
+                  allowed)))))
 
-(defn goal-reached? [{:keys [occupied fixed]}]
-  (= (* gridsiz gridsiz) (count occupied)))
 
-(defn sudoku [puzzle]
-  (algo/dfs {:init-state (init-state puzzle)
-             :generate available
-             :goal? goal-reached?
-             :update update-state
-             :add conjm
-             :options {:no-visited true}}))
+(defn ->map [puzzle-str]
+  (->> puzzle-str
+       (map-indexed vector)
+       (reduce (fn [gvs [i v]]
+                 (if (not= \0 v)
+                   (assoc gvs i (Integer/parseInt (str v)))
+                   gvs))
+               {})))
 
-(def problem-1
-;; https://en.wikipedia.org/wiki/Sudoku_solving_algorithms#/media/File:Sudoku_Puzzle_by_L2G-20050714_standardized_layout.svg
-  [0 [0 0] 5, 0 [0 1] 3, 0 [1 0] 6, 0 [2 1] 9, 0 [2 2] 8, 
-   1 [0 1] 7, 1 [1 0] 1, 1 [1 1] 9, 1 [1 2] 5, 
-   2 [2 1] 6, 
-   3 [0 0] 8, 3 [1 0] 4, 3 [2 0] 7, 
-   4 [0 1] 6, 4 [1 0] 8, 4 [1 2] 3, 4 [2 1] 2,
-   5 [0 2] 3, 5 [1 2] 1, 5 [2 2] 6, 
-   6 [0 1] 6, 
-   7 [1 0] 4, 7 [1 1] 1, 7 [1 2] 9, 7 [2 1] 8,
-   8 [0 0] 2, 8 [0 1] 8, 8 [1 2] 5, 8 [2 1] 7, 8 [2 2] 9])
 
-(def solution-1 [0 [0 2] 4, 0 [1 1] 7, 0 [1 2] 2, 0 [2 0] 1, 
-                 1 [0 0] 6, 1 [0 2] 8, 1 [2 0] 3, 1 [2 1] 4, 1 [2 2] 2,
-                 2 [0 0] 9, 2 [0 1] 1, 2 [0 2] 2, 2 [1 0] 8, 2 [1 1] 4, 2 [ 1 2] 8,
-                 2 [2 0] 5, 2 [2 2] 7, 
-                 3 [0 1] 5, 3 [0 2] 9, 3 [1 1] 2, 3 [1 2] 6, 3 [2 1] 1, 3 [2 2] 3,
-                 4 [0 0] 7, 4 [0 2] 1, 4 [1 1] 5, 4 [2 0] 9, 4 [2 2] 4,
-                 5 [0 0] 4, 5 [0 1] 2, 5 [1 0] 7, 5 [1 1] 9, 5 [2 0] 8, 5 [2 1] 5,
-                 6 [0 0] 9, 6 [0 2] 1, 6 [1 0] 2, 6 [1 1] 8, 6 [1 2] 7, 
-                 6 [2 0] 3, 6 [2 1] 4, 6 [2 2] 5,
-                 7 [0 0] 5, 7 [0 1] 3, 7 [0 2] 7, 7 [2 0] 2, 7 [2 2] 6,
-                 8 [0 2] 4, 8 [1 0] 6, 8 [1 1] 3, 8 [2 0] 1])
-(def problem-2 
-  ;; https://en.wikipedia.org/wiki/Sudoku_solving_algorithms#/media/File:Sudoku_puzzle_hard_for_brute_force.svg
-  [0 [2 2] 1, 1 [1 2] 3, 1 [2 1] 2, 2 [1 1] 8, 2 [1 2] 5, 
-   3 [1 2] 4, 3 [2 1] 9, 4 [0 0] 5, 4 [0 2] 7, 5 [1 0] 1,
-   6 [0 0] 5, 6 [1 2] 2, 7 [1 1] 1, 7 [2 1] 4, 8 [0 1] 7, 8 [0 2] 3, 8 [2 2] 9])
 
 (deftest idx->box-test
   (are [exp idxs] (let [boxes (mapv idx->box idxs)]
@@ -171,20 +204,122 @@
     7 [6 3] 7 [7 4]
     8 [8 8]))
 
-(defn scaffold-state [problem solution removed-ks]
-  (-> (fmt-as-idx->val problem)
-      (merge (fmt-as-idx->val solution))
-      (#(apply dissoc % removed-ks))
-      populate-state))
+(deftest idx->peers-test
+  (are [idx exp] (= (sort exp) (idx->peers idx))
+    10
+    [0 1 2 9 11 12 13 14 15 16 17 18 19 20 28 37 46 55 64 73]))
 
-(deftest available-test 
-  (are [exp removed-from-sol prob sol] 
-      (let [state (scaffold-state prob sol removed-from-sol)
-            actual (available state)] 
-        (= (into #{} exp) 
-           (set (available state))))
-    [[78 1]] [78] problem-1 solution-1))
+
+(defn ->str [sol]
+  (->> sol sort (map #(first (second %))) (apply str)))
+
+(def problem-1
+;; https://en.wikipedia.org/wiki/Sudoku_solving_algorithms#/media/File:Sudoku_Puzzle_by_L2G-20050714_standardized_layout.svg
+ "530070000600195000098000060800060003400803001700020006060000280000419005000080079")
+
+(def solution-1 
+  "534678912672195348198342567859761423426853791713924856961537284287419635345286179")
+
+(def problem-2 
+  ;; Has 3309 solutions, not well formed.
+  ;; https://en.wikipedia.org/wiki/Sudoku_solving_algorithms#/media/File:Sudoku_puzzle_hard_for_brute_force.svg
+  "000000000000003085001020000000507000004000100090000000500000073002010000000040009")
+
+(def problem-3 
+"003020600900305001001806400008102900700000008006708200002609500800203009005010300")
+(def solution-3
+"483921657967345821251876493548132976729564138136798245372689514814253769695417382")
+
+
+(def units (->> idx->units (mapcat second) set))
+
+(defn possible-assignment? [values]
+  (every? (fn [unit]
+            (->> unit 
+                 (map values)
+                 (reduce (fn [[ok? seen :as acc] vs]
+                           (if-not ok?
+                             (reduced nil) 
+                             (if (= 1 (count vs))
+                               (let [v (first vs)]
+                                 [(not (seen v)), (conj seen v)])
+                               acc)))
+                         [true #{}])))
+          units))
+
+(deftest assign-test
+  (testing "against known solution"
+      (are [exp puzzle]
+          (= exp (->str (assign (->map puzzle))))
+        solution-1 problem-1
+        solution-3 problem-3))
+  (testing "using validation"
+    (are [input] (let [assigned (assign (->map input))]
+                   (possible-assignment? assigned))
+     problem-1 problem-3 problem-2)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;  DFS test harness and tests below ;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn search-priority [m] 
+  (fn [k1 k2]
+    (let [c1 (count (m k1))
+          c2 (count (m k2))]
+      (cond 
+        (= c1 c2) true ;; to deal with 'repeated use of assoc', 
+                       ;; see clojure.core/sorted-map-by
+        (= 1 c1) false
+        (= 1 c2) true
+        :else (< c1 c2)))))
+
+(defn priority-map 
+  ([m]
+   (into (sorted-map-by (search-priority m))
+         m)))
+
+(defn init-state [grid]
+  {:values  (let [assigned (assign grid)] 
+              (priority-map assigned))})
+
+(defn update-state [{:keys [values] :as state} new-values]
+  (assoc state :values 
+         (priority-map new-values)))
+
+(defn pick [{:keys [values]}]
+  (->> values first 
+       ((fn [[idx vs]] 
+           (keep #(assign values idx %)
+                 vs)))))
+
+(defn solved? [{:keys [values] :as state}]
+  (and (not (empty? values))
+       (every? #(and (= (* gridsiz gridsiz) (count values)) 
+                     (= 1 (count (second %)))) values)))
+
+
+(defn sudoku [puzzle]
+  (algo/dfs {:init-state (init-state (->map puzzle))
+             :goal? solved?
+             :update update-state
+             :generate pick
+             :add (fn 
+                    ([] nil) 
+                    ([{:keys [values]}] values)
+                    ([_ values] values))
+             :options {:no-visited true}}))
+
 
 (deftest sudoku-test
-  (are [exp input] (= (fmt-as-idx->val exp) (first (sudoku input)))
-    solution-1 problem-1))
+  (testing "against known solutions, 1-only (valid) puzzles"
+      (are [exp puzzle]
+          (let [search (sudoku puzzle)]
+            (and (= 1 (count search)) 
+                 (= exp (->str (first search)))))
+        solution-1 problem-1
+        solution-3 problem-3))
+  (testing "using validation, on multiple solutions (invalid) puzzles"
+    (are [input n] (->> (take n (sudoku input)) 
+                        (every? #(and (solved? {:values %})
+                                      (possible-assignment? %))))
+      problem-2 10)))
