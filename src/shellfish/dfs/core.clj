@@ -81,35 +81,42 @@
   :goal?, a predicate which returns true if its argument state represents a solution
   :update, a fn taking a state and a solution element, and yielding the next state
   :generate, a fn generating a sequence of candidates from the current state
-  :add, a 0- arity and 2-arity fn initializing and adding an element to a solution,
-        defaults to 'conj
+  :add, a 0- arity and 2-arity and (optionally) 1-arity fn initializing and 
+        adding an element to a solution. If init-state is already solved, 
+        the 1-arity is used to return a 1-element seq containing the result
+        of (add init-state); defaults to 'conj
   :options, optional map of tweaks to default behaviour:
        - :visited? a 2-ary predicate given a sequence of visited states so far, 
                    and the state resulting from the current candidate element,
                    returns true if progress is impeded. Defaults to set membership.
-       - :no-visited if true, bypass visited states membership
+       - :no-visited if true, bypass visited states membership check
 
  Note that outputs from the update function are assumed to be unique, or inaccurate 
- results or non-termination may occur. 
+ results or non-termination may occur. Also, if the initial state (init-state)
+ may already be a solution, a 1-arity must be part of the add function.
 "
   ([{:keys [init-state goal? generate add update]
      {:keys [visited? no-visited]} :options
      :or {add conj} :as params}]
-   (let [cfg (merge {:add add :visited? visited? :no-visited no-visited} 
-                    (select-keys params [:goal? :generate :add :update])) 
-         seed (-> init-state generate 
-                  (zload (merge (cond
-                                  no-visited {} 
-                                  visited? {:visited [init-state]}
-                                  :else {:visited #{init-state}}) 
-                                {:state init-state
-                                 :result (add)})) 
-                   zinit)
-         f (fn f [zcands]
-             (lazy-seq
-              (when-let [[sol next-zcands] (next-solution zcands cfg)]
-                (cons sol (f next-zcands)))))]
-     (f seed)))
+   (if (goal? init-state)
+     (list (add init-state))
+     (let [cfg (merge {:add add :visited? visited? :no-visited no-visited} 
+                      (select-keys params [:goal? :generate :add :update])) 
+           seed (-> init-state generate 
+                    (zload (merge (cond
+                                    no-visited {} 
+                                    visited? {:visited [init-state]}
+                                    :else {:visited #{init-state}}) 
+                                  {:state init-state
+                                   :result (add)})) 
+                    zinit)
+           f (fn f [zcands]
+               (lazy-seq
+                (let [[sol next-zcands] (next-solution zcands cfg)]
+                  (if (nil? sol) 
+                    ()
+                    (cons sol (f next-zcands))))))]
+       (f seed))))
 
   ([init-state, goal-pred?, generate-candidates-fn,
     add-element-fn, update-state-fn]
