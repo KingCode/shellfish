@@ -1,4 +1,4 @@
-(defproject shellfish "0.5-ALPHA"
+(defproject shellfish "0.5.1-ALPHA"
   :description "FIXME: write description"
   :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"

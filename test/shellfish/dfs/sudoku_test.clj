@@ -370,4 +370,4 @@
 (deftest sudoku-test-hardest-Norvig
   (testing "11 hardest known by Norvig's Google search"
     (is (->> (su/read-11-hardest-Norvig)
-             (test-puzzles-passed? 1 1)))))
+             (test-puzzles-passed? 11 1)))))
