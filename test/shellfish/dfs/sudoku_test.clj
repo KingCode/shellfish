@@ -354,4 +354,20 @@
 (deftest sudoku-test-95-hard-puzzles
   (testing "95 hard puzzles using validation"
     (is (->> (su/read-95-hard-puzzles)
-             (test-puzzles-passed? 5 1)))))
+             (test-puzzles-passed? 95 1)))))
+
+(deftest sudoku-test-hardest-Inkala-2006
+  (testing "hardest known by Inkala in 2006"
+    (is (->> (su/read-hardest-known-2006)
+             (test-puzzles-passed? 1 1)))))
+
+(deftest sudoku-test-hardest-Inkala-2010
+  (testing "hardest known created by Inkala in 2010"
+    (is (->> (su/read-hardest-known-2010)
+             (test-puzzles-passed? 1 1)))))
+
+
+(deftest sudoku-test-hardest-Norvig
+  (testing "11 hardest known by Norvig's Google search"
+    (is (->> (su/read-11-hardest-Norvig)
+             (test-puzzles-passed? 1 1)))))

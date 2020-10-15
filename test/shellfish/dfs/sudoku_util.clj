@@ -54,6 +54,12 @@
         (map grid-processor))))
 
 
+(defn dots+1grid-per-line  [path size]
+  [path 
+   identity 
+   #(re-matches #"^[1-9.]+\n?" %)
+   #(line->grid % size char->1-9?)])
+
 (defn config 
   ([] (config 9))
   ([size] 
@@ -63,15 +69,29 @@
                                lines))
      #(re-matches #"^\d+" (first %))
      #(lines->grid % size char->1-9?)]
-    :95-hard-puzzles
-    ["sudoku/95-hard-puzzles.txt"
-     identity 
-     #(re-matches #"^[1-9.]+\n?" %)
-     #(line->grid % size char->1-9?)
-     ]}))
+
+    :95-hard-puzzles 
+    (dots+1grid-per-line "sudoku/95-hard-puzzles.txt" size)
+    :hardest-known-Inkala-2006 
+    (dots+1grid-per-line "sudoku/hardest-known-2006.txt" size)
+    :hardest-known-ever-Inkala-2010 
+    (dots+1grid-per-line "sudoku/hardest-ever-created-by-ArtoInkala-2010.txt" size)
+    :11-hardest-Norvig 
+    (dots+1grid-per-line "sudoku/11-hardest-puzzles.txt" size)}))
 
 (defn read-50-easy-puzzles []
   (apply read-puzzles (:50-easy-puzzles (config))))
 
 (defn read-95-hard-puzzles []
   (apply read-puzzles (:95-hard-puzzles (config))))
+
+(defn read-hardest-known-2006 []
+  (apply read-puzzles (:hardest-known-Inkala-2006 (config))))
+
+
+(defn read-hardest-known-2010 []
+  (apply read-puzzles (:hardest-known-ever-Inkala-2010 (config))))
+
+(defn read-11-hardest-Norvig []
+  (apply read-puzzles (:11-hardest-Norvig (config))))
+
