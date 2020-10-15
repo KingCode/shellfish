@@ -1,6 +1,9 @@
 (ns shellfish.dfs.sudoku-test
   (:require [shellfish.dfs.core :as algo]
-            [shellfish.common.util :as u :refer [cond-let]]
+            [shellfish.dfs.sudoku-util :as su]
+            [shellfish.common.grid :as g]
+            [shellfish.common.util :as u :refer [cond-let conjs conjm]]
+            ;; [clojure.core.match :refer [match]]
             [clojure.set :as set]
             [clojure.test :as t :refer [deftest testing is are]]))
 
@@ -16,36 +19,20 @@
                                  [i all-vals]))
                           (range (* gridsiz gridsiz)))))
 
-(defn conj-fn [init]
-  (fn f 
-    ([] init)
-    ([coll x]
-     (conj (or coll (f)) x))))
+(defn rc->idx [[row col]] 
+  (g/rc->idx gridsiz [row col]))
 
-(def conjs  (conj-fn #{}))
-
-(def conjm (conj-fn {}))
-
-(defn rc->idx 
-  ([[row col]] 
-   (rc->idx gridsiz [row col]))
-  ([n [row col]]
-   (-> (* row n ) (+ col) )))
-
-(defn idx->rc 
-  ([idx]
-   (idx->rc gridsiz idx))
-  ([n idx]
-   [(quot idx n), (rem idx n)]))
+(defn idx->rc [idx]
+  (g/idx->rc gridsiz idx))
 
 (defn rc->box [[r c]]
-  (rc->idx boxsiz [(quot r boxsiz) (quot c boxsiz)]))
+  (g/rc->idx boxsiz [(quot r boxsiz) (quot c boxsiz)]))
 
 (defn idx->box [idx]
   (rc->box (idx->rc idx)))
 
 (defn box-rc->idx [bidx [r c]]
-  (let [[br bc] (idx->rc boxsiz bidx)]
+  (let [[br bc] (g/idx->rc boxsiz bidx)]
     (rc->idx [(-> br (* boxsiz) (+ r)) 
               (-> bc (* boxsiz) (+ c))])))
 
@@ -69,7 +56,7 @@
 (defn idx->linemap [extract-f] 
   (->> idxs
        (map (fn [i]
-              [i (extract-f (idx->rc gridsiz i))]))
+              [i (extract-f (g/idx->rc gridsiz i))]))
        (into {})))
 
 (def idx->row (idx->linemap first))
@@ -262,32 +249,40 @@
 ;;;;;;;;;;;  DFS test harness and tests below ;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn search-priority [m] 
+#_(defn search-priority [m] 
   (fn [k1 k2]
     (let [c1 (count (m k1))
           c2 (count (m k2))]
-      (cond 
-        (= c1 c2) true ;; to deal with 'repeated use of assoc', 
-                       ;; see clojure.core/sorted-map-by
-        (= 1 c1) false
-        (= 1 c2) true
-        :else (< c1 c2)))))
+      (match [(= 1 c1) (= 1 c2)]
+             [true true] (< k1  k2) ;; to deal with 'repeated use of assoc', 
+                             ;; see clojure.core/sorted-map-by
+             [true false] false
+             [false true] true
+             :else (< c1 c2)))))
 
-(defn priority-map 
+#_(defn priority-map 
   ([m]
    (into (sorted-map-by (search-priority m))
          m)))
 
 (defn init-state [grid]
-  {:values  (let [assigned (assign grid)] 
-              (priority-map assigned))})
+  {:values  (assign grid) #_(let [assigned (assign grid)] 
+                 (priority-map assigned))})
 
 (defn update-state [{:keys [values] :as state} new-values]
-  (assoc state :values 
-         (priority-map new-values)))
+  (assoc state :values new-values
+         #_(priority-map new-values)))
 
 (defn pick [{:keys [values]}]
-  (->> values first 
+  (->> values
+       (remove #(= 1 (count (second %))))
+       (reduce (fn [[kv kount :as acc] [idx vs]]
+                 (cond-let
+                  (= 2 kount-vs) [kount-vs (count vs)] (reduced [[idx vs]]) 
+                  (< kount-vs kount) :>> [[idx vs] kount-vs]
+                  :else acc))
+               [nil Integer/MAX_VALUE])
+       first
        ((fn [[idx vs]] 
            (keep #(assign values idx %)
                  vs)))))
@@ -297,29 +292,66 @@
        (every? #(and (= (* gridsiz gridsiz) (count values)) 
                      (= 1 (count (second %)))) values)))
 
+(defn unwrap [values]
+  (->> values 
+       (map (fn [[idx vs]]
+              [idx (first vs)])) 
+       (into (sorted-map))))
 
-(defn sudoku [puzzle]
-  (algo/dfs {:init-state (init-state (->map puzzle))
-             :goal? solved?
-             :update update-state
-             :generate pick
-             :add (fn 
-                    ([] nil) 
-                    ([{:keys [values]}] values)
-                    ([_ values] values))
-             :options {:no-visited true}}))
+(defn sudoku 
+  ([puzzle]
+   (sudoku puzzle true nil))
+  ([puzzle unwrap?]
+   (sudoku puzzle unwrap? nil))
+  ([puzzle unwrap? formatter]
+   (algo/dfs {:init-state (init-state 
+                           ((or formatter identity) puzzle))
+              :goal? solved?
+              :update update-state
+              :generate pick
+              :add (fn add 
+                     ([] nil) 
+                     ([{:keys [values]}] (add nil values))
+                     ([_ values] (if unwrap? 
+                                   (unwrap values)
+                                   values)))
+              :options {:no-visited true}})))
 
 
-(deftest sudoku-test
+(defn solution? [sol]
+  (and (solved? {:values sol})
+       (possible-assignment? sol)))
+
+(deftest sudoku-test-local-puzzles
   (testing "against known solutions, 1-only (valid) puzzles"
       (are [exp puzzle]
-          (let [search (sudoku puzzle)]
+          (let [search (sudoku puzzle nil ->map)]
             (and (= 1 (count search)) 
                  (= exp (->str (first search)))))
         solution-1 problem-1
         solution-3 problem-3))
   (testing "using validation, on multiple solutions (invalid) puzzles"
-    (are [input n] (->> (take n (sudoku input)) 
-                        (every? #(and (solved? {:values %})
-                                      (possible-assignment? %))))
+    (are [input n] (->> (take n (sudoku input nil ->map)) 
+                        (every? solution?))
       problem-2 10)))
+
+(defn test-pipe [n]
+  (comp (map #(sudoku % false))
+        (map #(->> % (take n)))
+        (map #(every? solution? %))))
+
+(defn test-puzzles-passed? [n k puzzles]
+  (->> puzzles
+       (sequence (test-pipe k))
+       (take n)
+       (every? identity)))
+
+(deftest sudoku-test-50-easy-puzzles
+  (testing "50 easy puzzles using validation"
+    (is (->> (su/read-50-easy-puzzles)
+             (test-puzzles-passed? 50 1)))))
+
+(deftest sudoku-test-95-hard-puzzles
+  (testing "95 hard puzzles using validation"
+    (is (->> (su/read-95-hard-puzzles)
+             (test-puzzles-passed? 5 1)))))

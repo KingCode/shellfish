@@ -2,10 +2,6 @@
   (:require [shellfish.dfs.core :as algo] 
             [clojure.test :as t :refer [deftest testing is are]]))
 
-;; (defn rc->idx [n row col]
-  ;; (-> (* row n) (+ col) ))
-;; (defn idx->rc [n idx]
-  ;; [(quot idx n), (rem idx n)])
 (defn edges? [n rc & rcs]
   (every? (fn [[r c]]
             (or (zero? r)

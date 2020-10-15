@@ -111,3 +111,15 @@
                    :else (cons (emit-branch pred binds expr) 
                                (emit more)))))]
     `(or ~@(emit clauses))))
+
+
+(defn conj-fn [init]
+  (fn f 
+    ([] init)
+    ([coll x]
+     (conj (or coll (f)) x))))
+
+(def conjs  (conj-fn #{}))
+
+(def conjm (conj-fn {}))
+
